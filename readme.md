@@ -23,6 +23,14 @@
   - `ansible.posix >= 1.4.0` — для монтирования
 
 ---
+## ✅ Как скачать этот репозиторий
+
+Склонируйте проект с GitHub:
+
+```bash
+git clone https://github.com/stuninslave/test-zadanie.git
+cd test-zadanie
+```
 
 ## ✅ Как установить
 
