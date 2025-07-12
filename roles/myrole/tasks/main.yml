@@ -1,0 +1,248 @@
+---
+# ========================================
+# Проверка переменных и ОС
+# ========================================
+
+- name: Debug merged variables
+  ansible.builtin.debug:
+    msg:
+      - "vg_name: {{ vg_name }}"
+      - "lv_name_home: {{ lv_name_home }}"
+      - "mount_point_home: {{ mount_point_home }}"
+      - "lv_name_opt: {{ lv_name_opt }}"
+      - "mount_point_opt: {{ mount_point_opt }}"
+      - "opt_lv_size: {{ opt_lv_size }}"
+      - "memory_limit_percent: {{ memory_limit_percent }}"
+      - "cpu_limit_percent: {{ cpu_limit_percent }}"
+
+- name: Check that resource percents do not exceed 100%
+  ansible.builtin.assert:
+    that:
+      - memory_limit_percent | int <= 100
+      - cpu_limit_percent | int <= 100
+    fail_msg: >
+      Invalid resource limits: memory_limit_percent={{ memory_limit_percent }},
+      cpu_limit_percent={{ cpu_limit_percent }}. Both must be <= 100.
+
+- name: Ensure OS is Rocky Linux 9
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution == "Rocky"
+      - ansible_distribution_major_version | int == 9
+    fail_msg: "Target host must be Rocky Linux 9"
+
+
+# ========================================
+# Получаем фактический размер LV для /home
+# ========================================
+
+- name: Get current LV size for {{ mount_point_home }} using lvs command
+  ansible.builtin.command: >
+    lvs --noheadings --units g -o LV_SIZE --nosuffix /dev/{{ vg_name }}/{{ lv_name_home }}
+  register: lvm_home_raw
+  changed_when: false
+
+- name: Set fact for current LV size as float
+  ansible.builtin.set_fact:
+    lvm_home_size_g: "{{ lvm_home_raw.stdout | trim | float }}"
+
+# ========================================
+# Baseline размер сохраняем при первом запуске
+# ========================================
+
+- name: Check if baseline file exists
+  ansible.builtin.stat:
+    path: "/etc/myrole_{{ lv_name_home }}_initial_size.yml"
+  register: baseline_file
+
+- name: Save baseline LV size (one-time)
+  ansible.builtin.copy:
+    dest: "/etc/myrole_{{ lv_name_home }}_initial_size.yml"
+    content: |
+      ---
+      {{ lv_name_home }}_lv_baseline_size: {{ lvm_home_size_g }}
+  when: not baseline_file.stat.exists
+
+- name: Set fact home_lv_baseline_size (when new)
+  ansible.builtin.set_fact:
+    home_lv_baseline_size: "{{ lvm_home_size_g }}"
+  when: not baseline_file.stat.exists
+
+- name: Read baseline LV size from file on remote host
+  ansible.builtin.command: "cat /etc/myrole_{{ lv_name_home }}_initial_size.yml"
+  register: baseline_raw
+  changed_when: false
+  when: baseline_file.stat.exists
+
+- name: Parse baseline file as vars
+  ansible.builtin.set_fact:
+    baseline_vars: "{{ baseline_raw.stdout | from_yaml }}"
+  when: baseline_file.stat.exists
+
+- name: Set fact home_lv_baseline_size as float
+  ansible.builtin.set_fact:
+    home_lv_baseline_size: "{{ baseline_vars[lv_name_home ~ '_lv_baseline_size'] | float }}"
+  when: baseline_file.stat.exists
+
+# ========================================
+# Вычисляем целевой размер и расширяем
+# ========================================
+
+- name: Calculate new {{ lv_name_home }} LV size (+10G to baseline)
+  ansible.builtin.set_fact:
+    new_home_size: "{{ '%dG' | format(((home_lv_baseline_size | float) + 10) | round(0, 'ceil') | int) }}"
+
+- name: Check if current LV size >= new size
+  ansible.builtin.set_fact:
+    needs_resize: "{{ (lvm_home_size_g | float) < ((home_lv_baseline_size | float) + 10) }}"
+
+- name: Extend {{ lv_name_home }} LV to new size if needed
+  community.general.lvol:
+    vg: "{{ vg_name }}"
+    lv: "{{ lv_name_home }}"
+    size: "{{ new_home_size }}"
+    resizefs: true
+  when: needs_resize
+
+# ========================================
+# Создаём LV для {{ mount_point_opt }} (идемпотентно)
+# ========================================
+
+- name: Check if {{ lv_name_opt }} LV already exists
+  ansible.builtin.command: >
+    lvs --noheadings -o lv_name /dev/{{ vg_name }}
+  register: lvs_output
+  changed_when: false
+
+- name: Set fact if {{ lv_name_opt }} LV exists
+  ansible.builtin.set_fact:
+    opt_lv_exists: "{{ lv_name_opt in (lvs_output.stdout_lines | map('trim') | list) }}"
+
+- name: Create LV for {{ mount_point_opt }} if not exists
+  community.general.lvol:
+    vg: "{{ vg_name }}"
+    lv: "{{ lv_name_opt }}"
+    size: "{{ opt_lv_size }}"
+  when: not opt_lv_exists
+
+- name: Check filesystem type for {{ lv_name_opt }} LV
+  ansible.builtin.command: >
+    blkid -o value -s TYPE /dev/{{ vg_name }}/{{ lv_name_opt }}
+  register: opt_fs_type
+  failed_when: false
+  changed_when: false
+
+- name: Format LV {{ lv_name_opt }} as XFS if not formatted
+  ansible.builtin.filesystem:
+    fstype: xfs
+    dev: "/dev/{{ vg_name }}/{{ lv_name_opt }}"
+  when: opt_fs_type.stdout == ""
+
+# ========================================
+# Монтируем и прописываем fstab
+# ========================================
+
+- name: Ensure {{ mount_point_opt }} directory exists
+  ansible.builtin.file:
+    path: "{{ mount_point_opt }}"
+    state: directory
+
+- name: Mount {{ mount_point_opt }} and ensure fstab entry
+  ansible.posix.mount:
+    path: "{{ mount_point_opt }}"
+    src: "/dev/{{ vg_name }}/{{ lv_name_opt }}"
+    fstype: xfs
+    opts: defaults
+    state: mounted
+
+# ========================================
+# Создаём пользователя и daemon
+# ========================================
+
+- name: Create myuser
+  ansible.builtin.user:
+    name: myuser
+    home: "{{ mount_point_opt }}/daemon"
+    create_home: yes
+    shell: /bin/bash
+
+- name: Copy mydaemon binary
+  ansible.builtin.copy:
+    src: mydaemon
+    dest: "{{ mount_point_opt }}/daemon/mydaemon"
+    owner: myuser
+    group: myuser
+    mode: '0755'
+
+# ========================================
+# Расчёт лимитов ресурсов
+# ========================================
+
+- name: Calculate memory and CPU limits
+  ansible.builtin.set_fact:
+    total_mem_gb: "{{ ((ansible_memtotal_mb / 1024) * (memory_limit_percent / 100)) | round(0, 'ceil') | int }}"
+    cpu_cores: "{{ [(ansible_processor_vcpus * (cpu_limit_percent / 100)) | round(0, 'ceil') | int, 1] | max }}"
+
+# ========================================
+# Конфиг и systemd
+# ========================================
+
+- name: Create mydaemon.cfg from template
+  ansible.builtin.template:
+    src: mydaemon.cfg.j2
+    dest: "{{ mount_point_opt }}/daemon/mydaemon.cfg"
+    owner: myuser
+    group: myuser
+    mode: '0644'
+
+- name: Create systemd service unit file
+  ansible.builtin.template:
+    src: mydaemon.service.j2
+    dest: /etc/systemd/system/mydaemon.service
+    mode: '0644'
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Enable and start mydaemon service
+  ansible.builtin.systemd:
+    name: mydaemon.service
+    enabled: yes
+    state: started
+
+# ========================================
+# Сеть: bonding интерфейсов
+# ========================================
+
+- name: Ensure {{ bond_name }} connection exists
+  ansible.builtin.command: >
+    nmcli connection add type bond con-name {{ bond_name }} ifname {{ bond_name }} mode {{ bond_mode }}
+  args:
+    creates: "/etc/NetworkManager/system-connections/{{ bond_name }}.nmconnection"
+  changed_when: true
+
+- name: Add bond slaves
+  ansible.builtin.command: >
+    nmcli connection add type ethernet con-name {{ bond_name }}-slave-{{ item }} ifname {{ item }} master {{ bond_name }}
+  args:
+    creates: "/etc/NetworkManager/system-connections/{{ bond_name }}-slave-{{ item }}.nmconnection"
+  changed_when: true
+  loop: "{{ bond_slaves }}"
+
+- name: Set IP address for {{ bond_name }}
+  ansible.builtin.command: >
+    nmcli connection modify {{ bond_name }} ipv4.addresses {{ bond_ip_address }}/{{ bond_ip_prefix }} ipv4.method manual connection.autoconnect yes
+  changed_when: true
+
+- name: Bring up bond slaves
+  ansible.builtin.command: >
+    nmcli connection up {{ bond_name }}-slave-{{ item }}
+  loop: "{{ bond_slaves }}"
+  changed_when: true
+
+- name: Bring up {{ bond_name }} connection
+  ansible.builtin.command: >
+    nmcli connection up {{ bond_name }}
+  changed_when: true
+

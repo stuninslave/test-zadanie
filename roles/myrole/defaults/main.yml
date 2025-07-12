@@ -1,0 +1,29 @@
+# opt_lv_size - размер тома LVM
+# memory_limit_percent - лимит RAM в процентах 
+# cpu_limit_percent - лимит CPU ядер в процентах.
+# vg_name: - имя Volume Group LVM
+# lv_name_home: имя LV, которой нужно накинуть 10G. 
+# mount_point_home: точка мониторирования home
+# lv_name_opt: имя LV , в который будем накидывать mydaemon
+# mount_point_opt: точка монитрования opt
+# раздел переменных bond - итак всё понятно.
+
+opt_lv_size: 5G 
+memory_limit_percet: 40
+cpu_limit_percent: 50
+
+vg_name: rl
+lv_name_home: home
+mount_point_home: /home
+
+lv_name_opt: opt
+mount_point_opt: /opt
+
+bond_name: bond0
+bond_mode: active-backup
+bond_slaves:
+  - eth1
+  - eth2
+bond_ip_address: 192.168.1.1
+bond_ip_prefix: 24
+

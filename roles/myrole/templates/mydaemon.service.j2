@@ -1,0 +1,19 @@
+[Unit]
+Description=My Daemon Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=myuser
+ExecStart=/opt/daemon/mydaemon
+WorkingDirectory=/opt/daemon
+Restart=always
+
+# CPU and MEMORY Limits. configured by myrole
+MemoryLimit={{ total_mem_gb }}G
+CPUQuota={{ cpu_limit_percent }}%
+
+[Install]
+WantedBy=multi-user.target
+

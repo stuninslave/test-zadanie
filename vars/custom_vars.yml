@@ -1,0 +1,18 @@
+opt_lv_size: 7G
+memory_limit_percent: 40
+cpu_limit_percent: 50
+
+vg_name: rl
+lv_name_home: home
+mount_point_home: /home
+
+lv_name_opt: opt
+mount_point_opt: /opt
+
+bond_name: bond0
+bond_mode: active-backup
+bond_slaves:
+  - eth1
+  - eth2
+bond_ip_address: 192.168.1.1
+bond_ip_prefix: 24

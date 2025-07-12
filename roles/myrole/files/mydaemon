@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+while true; do
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - Veni, vidi, vici" | logger -t mydaemon
+  sleep 30
+done
+

@@ -1,0 +1,4 @@
+opt_lv_size: 5G
+memory_limit_percent: 40
+cpu_limit_percent: 50
+
