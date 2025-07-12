@@ -85,6 +85,7 @@ systemctl status mydaemon.service
 tail -f /var/log/messages
 ```
 Ожидаемое сообщение:
+```bash
 %TIMESTAMP% - Veni, Vidi, Vici
-
+```
 
