@@ -29,8 +29,12 @@
 1. Установите Ansible:
    ```bash
    python3 -m pip install ansible
-
-2. Установите коллекции
+   ```
+   Либо
+   ```bash
+   sudo dnf install -y ansible
+   ```
+3. Установите коллекции
    ```bash
    ansible-galaxy collection install -r requirements.yml
 ## ✅ Как запустить
