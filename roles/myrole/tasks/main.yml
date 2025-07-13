@@ -178,12 +178,25 @@
 # Расчёт лимитов ресурсов
 # ========================================
 
-- name: Calculate memory and CPU limits
+- name: Calculate memory and CPU cores
   ansible.builtin.set_fact:
-    total_mem_gb: "{{ ((ansible_memtotal_mb / 1024) * (memory_limit_percent / 100)) | round(0, 'ceil') | int }}"
-    cpu_cores: "{{ [(ansible_processor_vcpus * (cpu_limit_percent / 100)) | round(0, 'ceil') | int, 1] | max }}"
+    total_mem_gb: >-
+      {{
+        ((ansible_memtotal_mb / 1024) * (memory_limit_percent / 100))
+        | float | round(0, 'ceil') | int
+      }}
+    cpu_cores: >-
+      {{
+        [(ansible_processor_vcpus * (cpu_limit_percent / 100))
+        | float | round(0, 'ceil') | int, 1] | max
+      }}
 
-# ========================================
+- name: Calculate CPU quota percent for systemd
+  ansible.builtin.set_fact:
+    cpu_quota_percent: "{{ cpu_cores | int * 100 }}"
+
+
+# =======================================
 # Конфиг и systemd
 # ========================================
 
